@@ -8,6 +8,10 @@ library(openxlsx)
 library(lubridate)
 library(sqldf)
 
+####################################
+#Module
+####################################
+
 qpca <- function(A,rank=0,ifscale=TRUE){
   if(ifscale){A <- scale(as.matrix(A))[,]}
   A.svd <- svd(A)
@@ -38,7 +42,10 @@ transdt <- function(x){
   c(date=as.numeric(x.date),sec=x.sec)
 }
 
+####################################
 #Init
+####################################
+
 idolmap <- read.xlsx('person.xlsx')
 colnames(idolmap)[1] <- 'idol'
 raw <- fread('vc_user__person__check.csv') %>% 
@@ -46,7 +53,10 @@ raw <- fread('vc_user__person__check.csv') %>%
 system.time(raw <- data.table(raw,t(sapply(raw$time_raw,transdt))))
 X <- merge(raw,idolmap,by='idol')
 
+####################################
 #Usermap
+####################################
+
 usermap.pay <- raw %>% select(user,vote) %>% 
   group_by(user,pay=(vote==3)+0) %>% 
   group_by(user) %>% summarise(pay=max(pay))
@@ -65,11 +75,64 @@ usermap.act <- raw %>% group_by(user) %>% summarise(
   vsec = ifelse(is.na(var(sec)),0,var(sec))
 ) 
 usermap <- merge(merge(usermap.pay,usermap.idol,by='user'),usermap.act,by='user')
-for(i in 3:9){print(colnames(usermap)[i]);print(t.test(usermap[,i]~usermap$pay))}
 
+####################################
+#Idolmatrix
+####################################
+
+idolmat <- X %>% group_by(idol,user,zh_name) %>% summarise(vote=sum(vote))
+idolmat <- merge(idolmat,idolmat %>% group_by(user) %>% summarise(score=sum(vote)),by='user')
+system.time(idolmat <- sqldf('
+      select a.idol as idoli,b.idol as idolj,sum(a.score) as score
+      from idolmat a left join idolmat b
+      on a.user = b.user
+      group by a.idol, b.idol
+      '))
+idolmat <- merge(idolmat,
+                 (filter(idolmat,idoli==idolj)%>%select(idolj,propi=score)),
+                 by='idolj') %>% mutate(
+                   propi = score/propi
+                 ) %>% select(idoli,idolj,score,propi)
+idolmat <- idolmat %>% arrange(idoli,idolj)
+
+####################################
+#Usermap.Idolcombo
+####################################
+
+usermap.icb <- X %>% group_by(idol,user) %>% summarise(vote=sum(vote))
+usermap.icb <- merge(usermap.icb,select(usermap,user,nvote),by='user') %>% mutate(
+  vote = vote/nvote
+) %>% select(idol,user,vote)
+usermap.icb <- merge(usermap.icb,
+                     select(filter(idolmat,idoli==idolj),idol=idoli,ivote=score),
+                     by='idol') %>% arrange(
+                       user,desc(vote),desc(ivote)
+                     ) %>% select(idoli=idol,user,vote,ivote)
+usermap.icb <- merge(usermap.icb,
+                     select(usermap.icb[match(unique(usermap.icb$user),usermap.icb$user),],
+                            user,idolj=idoli),
+                     by='user')
+usermap.icb <- merge(usermap.icb,
+              select(idolmat,idoli,idolj,score),
+              by=c('idoli','idolj')) %>% arrange(
+  user,vote, desc(ivote)
+) %>% mutate(ref = score/ivote) %>% select(-ivote,-score)
+usermap.icb <- merge(usermap.icb,
+      usermap.icb %>% group_by(user) %>% summarise(tref=sum(ref)),
+      by=c('user')) %>% mutate(ref=(ref/tref-vote)^2) %>% 
+  select(-tref) %>% group_by(user) %>% summarise(iscore=mean(ref))
+usermap <- merge(usermap,usermap.icb,by='user')
+
+
+####################################
+#Model
+####################################
+
+for(i in 3:10){print(colnames(usermap)[i]);print(t.test(usermap[,i]~usermap$pay))}
 usermap.bm <- usermap %>% group_by(pay) %>% summarise(
   vidol = mean(vidol), nvote = mean(nvote), nday = mean(nday),
-  nidol = mean(nidol), nact = mean(nact), vdate = mean(vdate), vsec = mean(vsec)
+  nidol = mean(nidol), nact = mean(nact), vdate = mean(vdate), 
+  vsec = mean(vsec), iscore = mean(iscore)
 )
 usermap.bm[3,] <- usermap.bm[2,]-usermap.bm[1,]
 system.time(
@@ -77,20 +140,48 @@ system.time(
     (x - as.numeric(usermap.bm[1,]))/as.numeric(usermap.bm[3,])
   })))
 )
-
 model <- sapply(1:10,function(i){
   pos <- filter(usermap.score,pay==1)
   neg <- filter(usermap.score,pay==0)
   set.seed(i); sel <- neg[sample(1:nrow(neg),nrow(pos)),]
   xi <- rbind(pos,sel)
   ldai <- lda(pay~vidol+nvote+nday+nidol+nact+vdate+vsec,data=xi)
-  # lmi <- lm(pay~vidol+nvote+nday+nidol+nact+vdate+vsec,data=xi)
   ldai <- predict(ldai,usermap.score)$posterior[,2]
-  # lmi <- predict(lmi,usermap.score)
   ldai
 })
 usermap <- data.table(usermap,score=rowMeans(model))
-usermap %>% group_by(pay) %>% summarise(max(score),mean(score),min(score))
 
+ttable <- unique(select(raw,date,sec)) %>% mutate(
+  hour = (date-18262)*24+floor(sec/3600)+1
+)
+fdata <- merge(raw,select(ttable,date,sec,hour),by=c('date','sec'))
+fdata <- merge(fdata,usermap,by='user')
 
+# save(fdata,usermap,idolmap,idolmat,file='fdata0203.rda')
 
+########################################################################
+########################################################################
+
+####################################
+#Idol
+####################################
+
+par(mfrow=c(2,3))
+iid <- '6098'
+x <- filter(fdata,idol==iid)
+x <- x %>% group_by(hour) %>% summarise(
+  vote = sum(vote), user = n_distinct(user), avote = vote/user, pay = mean(pay),
+  vidol = mean(vidol), nvote = mean(nvote), nday = mean(nday), nidol = mean(nidol),
+  nact = mean(nact), vdate = mean(vdate), vsec = mean(vsec), iscore = mean(iscore),
+  score = mean(score)
+)
+plot.ts(x$vote); plot.ts(x$pay); plot.ts(x$iscore)
+x <- filter(fdata,idol=='192531')
+x <- x %>% group_by(hour) %>% summarise(
+  vote = sum(vote), user = n_distinct(user), avote = vote/user, pay = mean(pay),
+  vidol = mean(vidol), nvote = mean(nvote), nday = mean(nday), nidol = mean(nidol),
+  nact = mean(nact), vdate = mean(vdate), vsec = mean(vsec), iscore = mean(iscore),
+  score = mean(score)
+)
+plot.ts(x$vote); plot.ts(x$pay); plot.ts(x$iscore)
+par(mfrow=c(2,3))
