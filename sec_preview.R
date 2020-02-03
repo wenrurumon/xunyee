@@ -113,13 +113,13 @@ usermap.icb <- merge(usermap.icb,
                             user,idolj=idoli),
                      by='user')
 usermap.icb <- merge(usermap.icb,
-              select(idolmat,idoli,idolj,score),
-              by=c('idoli','idolj')) %>% arrange(
-  user,vote, desc(ivote)
-) %>% mutate(ref = score/ivote) %>% select(-ivote,-score)
+                     select(idolmat,idoli,idolj,score),
+                     by=c('idoli','idolj')) %>% arrange(
+                       user,vote, desc(ivote)
+                     ) %>% mutate(ref = score/ivote) %>% select(-ivote,-score)
 usermap.icb <- merge(usermap.icb,
-      usermap.icb %>% group_by(user) %>% summarise(tref=sum(ref)),
-      by=c('user')) %>% mutate(ref=(ref/tref-vote)^2) %>% 
+                     usermap.icb %>% group_by(user) %>% summarise(tref=sum(ref)),
+                     by=c('user')) %>% mutate(ref=(ref/tref-vote)^2) %>% 
   select(-tref) %>% group_by(user) %>% summarise(iscore=mean(ref))
 usermap <- merge(usermap,usermap.icb,by='user')
 
@@ -166,22 +166,33 @@ fdata <- merge(fdata,usermap,by='user')
 #Idol
 ####################################
 
-par(mfrow=c(2,3))
+load('fdata0203.rda')
+
+par(mfrow=c(2,4))
 iid <- '6098'
 x <- filter(fdata,idol==iid)
-x <- x %>% group_by(hour) %>% summarise(
+x <- x %>% group_by(hour=floor(hour/2)) %>% summarise(
   vote = sum(vote), user = n_distinct(user), avote = vote/user, pay = mean(pay),
   vidol = mean(vidol), nvote = mean(nvote), nday = mean(nday), nidol = mean(nidol),
   nact = mean(nact), vdate = mean(vdate), vsec = mean(vsec), iscore = mean(iscore),
   score = mean(score)
 )
-plot.ts(x$vote); plot.ts(x$pay); plot.ts(x$iscore)
-x <- filter(fdata,idol=='192531')
-x <- x %>% group_by(hour) %>% summarise(
+plot.ts(x$vote,main=paste(iid,'vote'),ylab=''); 
+plot.ts(x$pay,main=paste(iid,'pay%'),ylab=''); 
+plot.ts(x$iscore,main=paste(iid,'iscore'),ylab='')
+plot.ts(x$score,main=paste(iid,'score'),ylab='')
+iid <- '192531'
+x <- filter(fdata,idol==iid)
+x <- x %>% group_by(hour=floor(hour/2)) %>% summarise(
   vote = sum(vote), user = n_distinct(user), avote = vote/user, pay = mean(pay),
   vidol = mean(vidol), nvote = mean(nvote), nday = mean(nday), nidol = mean(nidol),
   nact = mean(nact), vdate = mean(vdate), vsec = mean(vsec), iscore = mean(iscore),
   score = mean(score)
 )
-plot.ts(x$vote); plot.ts(x$pay); plot.ts(x$iscore)
-par(mfrow=c(2,3))
+plot.ts(x$vote,main=paste(iid,'vote'),ylab=''); 
+plot.ts(x$pay,main=paste(iid,'pay%'),ylab=''); 
+plot.ts(x$iscore,main=paste(iid,'iscore'),ylab='')
+plot.ts(x$score,main=paste(iid,'score'),ylab='')
+par(mfrow=c(1,1))
+
+
