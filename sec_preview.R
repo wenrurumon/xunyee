@@ -242,4 +242,3 @@ x %>% arrange(desc(gap)) %>% mutate() %>% head(20)
 merge(merge(idolmat,select(idolmap,idoli=idol,zh_name),by='idoli'),
       select(idolmap,idolj=idol,zh_name),by='idolj') %>% arrange(desc(score)) %>% filter(idoli!=idolj) %>% head(20)
 
-
